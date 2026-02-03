@@ -118,12 +118,15 @@ const App = () => {
   };
 
   const handleScreenCapture = async () => {
-    setErrorMessage('');
-    try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ 
-        video: { cursor: "always" },
-        audio: false 
-      });
+   setErrorMessage('');
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({ 
+      video: { 
+        cursor: "always",
+        displaySurface: "window" // บังคับให้เบราว์เซอร์แสดงตัวเลือกหน้าต่างแอปฯ
+      },
+      audio: false 
+    });
       
       setIsLiveStream(true);
       
@@ -326,3 +329,4 @@ const App = () => {
 
 
 export default App;
+
