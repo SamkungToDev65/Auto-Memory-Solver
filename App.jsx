@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Video, Zap, RotateCcw, Play, Pause, Grid, Scan, CheckCircle, Activity, Monitor, AlertTriangle } from 'lucide-react';
 
 const App = () => {
@@ -18,11 +18,12 @@ const App = () => {
   const ROWS = 3;
   const COLS = 8;
 
+  // ฟังก์ชันคำนวณตำแหน่งการ์ด (ปรับให้ตรงกับสัดส่วนในภาพที่ส่งมา)
   const getCellPosition = (index, vWidth, vHeight) => {
     const startX = vWidth * 0.05;
-    const startY = vHeight * 0.20;
+    const startY = vHeight * 0.22; // ขยับลงมาเล็กน้อยหลบแถบชื่อด้านบน
     const gridW = vWidth * 0.90;
-    const gridH = vHeight * 0.68;
+    const gridH = vHeight * 0.65;
 
     const cellW = gridW / COLS;
     const cellH = gridH / ROWS;
@@ -38,7 +39,7 @@ const App = () => {
     };
   };
 
-  const processFrame = () => {
+  const processFrame = useCallback(() => {
     if (!videoRef.current || videoRef.current.paused || videoRef.current.ended) {
       requestRef.current = requestAnimationFrame(processFrame);
       return;
@@ -58,6 +59,10 @@ const App = () => {
 
       for (let i = 0; i < 24; i++) {
         const pos = getCellPosition(i, video.videoWidth, video.videoHeight);
+        
+        // ตรวจสอบขอบเขตป้องกัน Error
+        if (pos.x + pos.w > canvas.width || pos.y + pos.h > canvas.height) continue;
+
         const imgData = ctx.getImageData(pos.x, pos.y, pos.w, pos.h);
         const data = imgData.data;
         
@@ -75,6 +80,7 @@ const App = () => {
         const avgBrightness = totalBrightness / (data.length / 40);
         const score = avgBrightness + (colorfulness / 10);
 
+        // ตรวจจับเฉพาะจังหวะที่การ์ดสว่างพอ (ตอนหงายหน้าการ์ด)
         if (avgBrightness > threshold && score > bestScoresRef.current[i]) {
           const cropCanvas = document.createElement('canvas');
           cropCanvas.width = 150;
@@ -90,13 +96,14 @@ const App = () => {
 
       if (hasUpdate) {
         setGridImages(newImages);
-        setStatus(`ตรวจพบการ์ดเพิ่ม! รวม ${newImages.filter(x => x).length} / 24 ใบ`);
+        setStatus(`ตรวจพบการ์ด! รวม ${newImages.filter(x => x).length} / 24 ใบ`);
       }
     }
 
     requestRef.current = requestAnimationFrame(processFrame);
-  };
+  }, [gridImages, threshold]);
 
+  // ควบคุมการเริ่ม/หยุดสแกน
   useEffect(() => {
     if (isCapturing) {
       requestRef.current = requestAnimationFrame(processFrame);
@@ -104,46 +111,61 @@ const App = () => {
       cancelAnimationFrame(requestRef.current);
     }
     return () => cancelAnimationFrame(requestRef.current);
-  }, [isCapturing, gridImages]);
+  }, [isCapturing, processFrame]);
+
+  // ฟังก์ชันแชร์หน้าจอที่แก้ไขใหม่
+  const handleScreenCapture = async () => {
+    setErrorMessage('');
+    try {
+      // เรียกขอสิทธิ์แชร์จอ
+      const stream = await navigator.mediaDevices.getDisplayMedia({ 
+        video: { 
+          cursor: "always",
+          displaySurface: "window" 
+        },
+        audio: false 
+      });
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        
+        // ดักฟังถ้าผู้ใช้กด Stop Sharing จากแถบ Chrome
+        stream.getVideoTracks()[0].onended = () => {
+          fullReset();
+        };
+
+        // บังคับ Play
+        videoRef.current.onloadedmetadata = async () => {
+          try {
+            await videoRef.current.play();
+            setIsLiveStream(true);
+            setStatus('แชร์หน้าจอสำเร็จ: พร้อมสแกน');
+          } catch (e) {
+            console.error("Video play failed:", e);
+          }
+        };
+      }
+
+      resetMemory();
+    } catch (err) {
+      console.error(err);
+      setErrorMessage('ไม่สามารถเข้าถึงหน้าจอได้: ' + err.message);
+      setIsLiveStream(false);
+    }
+  };
 
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
       setErrorMessage('');
       setIsLiveStream(false);
+      if (videoRef.current && videoRef.current.srcObject) {
+        videoRef.current.srcObject.getTracks().forEach(t => t.stop());
+        videoRef.current.srcObject = null;
+      }
       setVideoSrc(URL.createObjectURL(file));
       resetMemory();
       setStatus('วิดีโอพร้อมแล้ว กด Start เพื่อเริ่มสแกน');
-    }
-  };
-
-  const handleScreenCapture = async () => {
-   setErrorMessage('');
-  try {
-    const stream = await navigator.mediaDevices.getDisplayMedia({ 
-      video: { 
-        cursor: "always",
-        displaySurface: "window" // บังคับให้เบราว์เซอร์แสดงตัวเลือกหน้าต่างแอปฯ
-      },
-      audio: false 
-    });
-      
-      setIsLiveStream(true);
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        // บังคับให้เล่นวิดีโอทันที
-        try {
-          await videoRef.current.play();
-        } catch (playError) {
-          console.warn("Autoplay was prevented, waiting for user interaction.");
-        }
-      }
-      resetMemory();
-      setStatus('เชื่อมต่อการแชร์หน้าจอสำเร็จ');
-    } catch (err) {
-      setErrorMessage('ไม่สามารถแชร์หน้าจอได้: ' + err.message);
-      setIsLiveStream(false);
     }
   };
 
@@ -217,12 +239,11 @@ const App = () => {
           
           <div className="lg:col-span-7 space-y-4">
             <div className="relative aspect-video bg-black rounded-[2rem] overflow-hidden border border-white/5 shadow-2xl">
-              {videoSrc || isLiveStream ? (
+              {(videoSrc || isLiveStream) ? (
                 <video 
                   ref={videoRef}
                   src={!isLiveStream ? videoSrc : undefined}
                   controls={!isLiveStream}
-                  autoPlay={isLiveStream}
                   playsInline
                   muted
                   className="w-full h-full object-contain"
@@ -297,13 +318,15 @@ const App = () => {
                     className={`aspect-[3/4.2] rounded-lg border relative overflow-hidden transition-all duration-300 ${img ? 'border-amber-500/50 bg-slate-900 shadow-lg shadow-amber-500/5' : 'border-white/5 bg-black/40'}`}
                   >
                     {img ? (
-                      <img src={img} className="w-full h-full object-cover animate-in fade-in" />
+                      <img src={img} alt={`card-${idx}`} className="w-full h-full object-cover animate-in fade-in" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center opacity-10 text-[8px] font-black">{idx + 1}</div>
                     )}
                     <div className="absolute top-0 right-0 bg-black/60 px-1 rounded-bl-md border-white/5 text-[7px] text-slate-400 font-mono font-bold">{idx + 1}</div>
+                    
+                    {/* เอฟเฟกต์เมื่อเจอคู่ */}
                     {img && gridImages.filter((x, i) => x === img && i !== idx).length > 0 && (
-                      <div className="absolute inset-0 border-2 border-amber-500 animate-[pulse_1.5s_infinite] pointer-events-none" />
+                      <div className="absolute inset-0 border-2 border-amber-500 animate-pulse pointer-events-none" />
                     )}
                   </div>
                 ))}
@@ -315,7 +338,7 @@ const App = () => {
                   <h4 className="text-[10px] font-black text-amber-400 uppercase tracking-widest">เทคนิคการใช้</h4>
                 </div>
                 <p className="text-[10px] text-slate-500 leading-relaxed italic">
-                  หากรันบน Vercel คุณสามารถแชร์หน้าต่างเกมสดๆ ได้เลยครับ ระบบจะสแกนหาคู่ให้โดยอัตโนมัติ
+                  หากใช้ Google Chrome ให้เลือกแชร์หน้าต่าง "Window" ของตัวเกมโดยตรง ระบบจะสแกนเฉพาะพื้นที่ในเกมและหาสัญลักษณ์ที่เหมือนกันให้โดยอัตโนมัติ
                 </p>
               </div>
             </div>
@@ -327,6 +350,4 @@ const App = () => {
   );
 };
 
-
 export default App;
-
