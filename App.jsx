@@ -120,22 +120,25 @@ const App = () => {
   const handleScreenCapture = async () => {
     setErrorMessage('');
     try {
-      // บน Vercel คำสั่งนี้จะทำงานและขอสิทธิ์จากผู้ใช้ได้ทันที
       const stream = await navigator.mediaDevices.getDisplayMedia({ 
         video: { cursor: "always" },
         audio: false 
       });
+      
       setIsLiveStream(true);
+      
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current.play();
-        };
+        // บังคับให้เล่นวิดีโอทันที
+        try {
+          await videoRef.current.play();
+        } catch (playError) {
+          console.warn("Autoplay was prevented, waiting for user interaction.");
+        }
       }
       resetMemory();
       setStatus('เชื่อมต่อการแชร์หน้าจอสำเร็จ');
     } catch (err) {
-      console.error(err);
       setErrorMessage('ไม่สามารถแชร์หน้าจอได้: ' + err.message);
       setIsLiveStream(false);
     }
@@ -320,5 +323,6 @@ const App = () => {
     </div>
   );
 };
+
 
 export default App;
